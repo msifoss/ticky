@@ -1,0 +1,6 @@
+{
+  "title": "Admin Consent Required: Microsoft Graph Explorer - Sites.Read.All",
+  "description": "<h2>Description</h2><p>Requesting admin consent for Sites.Read.All delegated permission on Microsoft Graph Explorer.</p>",
+  "priority": 2,
+  "tags": "SharePoint; Graph API; Permissions; CXSM"
+}

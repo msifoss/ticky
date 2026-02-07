@@ -1,0 +1,9 @@
+[project]
+name = "ticky"
+version = "0.1.0"
+description = "CLI utility for injecting work items into Azure DevOps"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0,<7.0"]
+
+[project.scripts]
+ticky = "ticky:main"

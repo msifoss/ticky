@@ -1,0 +1,18 @@
+title: "Admin Consent Required: Microsoft Graph Explorer - Sites.Read.All Delegated Permission"
+description: |
+  <h2>Description</h2>
+  <p>Requesting admin consent for the <strong>Sites.Read.All</strong> delegated permission
+  on Microsoft Graph Explorer for user <strong>cfossenier@membersolutions.com</strong>.</p>
+
+  <h2>Business Justification</h2>
+  <p>The CXSM team is conducting a SharePoint structure audit to improve documentation
+  organization and establish a scalable taxonomy.</p>
+
+  <h2>Scope &amp; Security Notes</h2>
+  <ul>
+  <li><strong>Permission type:</strong> Delegated (runs as signed-in user)</li>
+  <li><strong>Permission level:</strong> Read-only (Sites.Read.All)</li>
+  <li><strong>Application:</strong> Microsoft Graph Explorer (first-party)</li>
+  </ul>
+priority: 2
+tags: "SharePoint; Graph API; Permissions; CXSM"

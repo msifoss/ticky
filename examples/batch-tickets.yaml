@@ -1,0 +1,21 @@
+tickets:
+  - title: "Set up SharePoint site taxonomy audit"
+    description: |
+      <p>Create a comprehensive map of existing SharePoint sites, document libraries,
+      and folder structures for the CXSM team reorganization initiative.</p>
+    priority: 2
+    tags: "SharePoint; CXSM; Audit"
+
+  - title: "Document current SharePoint naming conventions"
+    description: |
+      <p>Review and document the current naming conventions (or lack thereof) across
+      all CXSM SharePoint sites. Identify inconsistencies and propose standards.</p>
+    priority: 3
+    tags: "SharePoint; CXSM; Documentation"
+
+  - title: "Propose new SharePoint folder hierarchy"
+    description: |
+      <p>Based on the audit findings, propose a new folder hierarchy that improves
+      findability and reduces maintenance overhead.</p>
+    priority: 3
+    tags: "SharePoint; CXSM; Proposal"
