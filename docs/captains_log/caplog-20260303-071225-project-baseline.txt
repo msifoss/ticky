@@ -1,0 +1,77 @@
+================================================================================
+CAPTAIN'S LOG: project-baseline
+Date: 2026-03-03 07:12:25
+Previous Log: None - First Entry
+================================================================================
+
+## Summary
+First captain's log for ticky, a Python CLI utility for creating and managing
+Azure DevOps work items from YAML, JSON, and Markdown files. The project has
+gone through its initial build and two follow-up feature rounds, establishing
+the core architecture and a usable feature set.
+
+## Current State
+Ticky is functional with 3 commits on main. The CLI supports creating work items
+(single and batch) from YAML/JSON/MD ticket files, fetching work items by ID,
+patching work item fields, and managing named ADO profiles. The codebase is
+compact at ~725 lines across two modules (ticky.py: 600 lines, config.py: 125
+lines). One untracked file (tickypat.txt) exists in the working tree. No remote
+tracking branch is configured.
+
+## Work Completed
+- Initial build: YAML/JSON ticket parsing, single + batch creation via ADO REST
+  API, dry-run mode, `ticky init` scaffolding for `.ticky.conf`
+- Markdown ticket parsing with YAML frontmatter and `_meta` lifecycle metadata
+  separation from ADO-bound fields
+- GET work item command (`ticky get <id>`) with pretty-print and `--json` output
+- PATCH work item command (`ticky update <id>`) with `--state`, `--assign`,
+  `--title`, `--priority`, `--tags`, and `--dry-run` flags
+- Named profile support: replaced single `[ado]` config section with `[default]`
+  plus named profiles, added `ticky profiles` subcommand and `--profile/-P` flag
+- Improved ticket prompt template with TL;DR, What's Needed, Background,
+  Reference, Impact, Estimated Time sections, verification steps, and stricter
+  formatting rules
+
+### Key Files
+- `ticky.py` — Main CLI entrypoint, all commands, ADO API integration
+- `config.py` — Config loading, validation, profile management
+- `templates/ticket-prompt.md` — Claude-facing prompt for generating tickets
+- `examples/` — Sample ticket files (YAML, JSON)
+- `sample-script.sh` — Reference shell script
+- `requirements.txt` — Single dependency (requests)
+
+## Decisions Made
+- Python + requests as the sole dependency — keeps the tool lightweight and
+  easy to install without heavy framework overhead
+- Config uses INI-style `.ticky.conf` with configparser — simple, no extra deps
+- Named profiles modeled as `[profile:<name>]` sections inheriting from
+  `[default]` — allows multi-org/multi-project workflows
+- Markdown tickets use YAML frontmatter for ADO fields and `_meta` prefix for
+  lifecycle metadata — clean separation of concerns
+- Ticket prompt template designed for Claude consumption — structured sections
+  guide AI to produce well-formed tickets
+
+## Issues Encountered
+- No remote tracking branch configured yet — project is local-only at this point
+- One untracked file (`tickypat.txt`) sitting in root, purpose unclear
+
+## Commits Made
+- 41b9e57: Initial commit: ticky - ADO work item CLI utility
+- 62a473a: Add .md ticket parsing, GET/PATCH work item commands, and profiles support
+- 0e7aa48: Add named profile support to config and improve ticket prompt template
+
+## Mistakes & Lessons
+- None this session — this is a baseline capture of existing state.
+
+## Next Steps
+- Set up remote repository and push
+- Add tests (unit tests for parsers, config loading, command dispatch)
+- Consider adding `ticky list` to query/filter work items from ADO
+- Consider adding `ticky sync` for bidirectional state synchronization
+- Clarify purpose of `tickypat.txt` — commit or remove
+- Add README / project documentation
+- Consider packaging (pip installable) via pyproject.toml enhancements
+
+================================================================================
+END OF LOG
+================================================================================
