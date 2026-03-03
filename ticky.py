@@ -158,6 +158,9 @@ def _extract_error(body: str, code: int) -> str:
 # Lifecycle fields stored in frontmatter but not sent to ADO
 _META_KEYS = {"status", "ado_id", "assigned_to", "created", "submitted"}
 
+# ADO states that mean a work item is finished
+_ADO_DONE_STATES = {"Done", "Closed", "Resolved", "Removed"}
+
 
 def parse_md_ticket(filepath: str) -> dict:
     """Parse an .md file with YAML frontmatter into a ticket dict.
@@ -199,6 +202,66 @@ def parse_md_ticket(filepath: str) -> dict:
 
     ticket["_meta"] = meta
     return ticket
+
+
+def _format_frontmatter_value(value) -> str:
+    """Serialize a value for YAML frontmatter.
+
+    Returns bare representation for simple strings/numbers, quoted if the
+    value contains special YAML characters.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    s = str(value)
+    # Quote if empty, or contains characters that could confuse YAML parsers
+    if not s or any(ch in s for ch in ":#{}[]|>&*!?,\n"):
+        escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return s
+
+
+def update_md_frontmatter(filepath: str, updates: dict) -> None:
+    """Update specific frontmatter keys in an .md file, preserving everything else.
+
+    Replaces only the keys present in `updates`. Preserves all other
+    frontmatter lines and the body byte-for-byte. Does NOT use yaml.dump
+    to avoid key reordering, quote-style changes, and reformatting.
+    """
+    path = Path(filepath)
+    text = path.read_text(encoding="utf-8")
+
+    match = re.match(r"\A---\s*\n(.*?\n)---\s*\n(.*)", text, re.DOTALL)
+    if not match:
+        raise ValueError(f"No YAML frontmatter found in {filepath}")
+
+    frontmatter_text, body = match.group(1), match.group(2)
+
+    # Replace matching key lines; track which updates were applied
+    applied = set()
+    new_lines = []
+    for line in frontmatter_text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        matched_key = None
+        for key in updates:
+            if stripped.startswith(f"{key}:"):
+                matched_key = key
+                break
+        if matched_key is not None:
+            indent = line[: len(line) - len(stripped)]
+            new_lines.append(f"{indent}{matched_key}: {_format_frontmatter_value(updates[matched_key])}\n")
+            applied.add(matched_key)
+        else:
+            new_lines.append(line)
+
+    # Append any keys that weren't already in the frontmatter
+    for key, value in updates.items():
+        if key not in applied:
+            new_lines.append(f"{key}: {_format_frontmatter_value(value)}\n")
+
+    new_text = "---\n" + "".join(new_lines) + "---\n" + body
+    path.write_text(new_text, encoding="utf-8")
 
 
 # ── File Loader ──────────────────────────────────────────────────────────────
@@ -506,6 +569,118 @@ def cmd_update(args):
     print(f"     State: {state}")
 
 
+def sync_ticket(filepath: str, config: dict, dry_run: bool = False, verbose: bool = False) -> str | None:
+    """Sync a single .md ticket's status with Azure DevOps.
+
+    Returns a status string: "updated", "current", "skipped", "error: ...",
+    or None if the file is not an .md file.
+    """
+    path = Path(filepath)
+    if path.suffix != ".md":
+        return None
+
+    try:
+        ticket = parse_md_ticket(filepath)
+    except ValueError as e:
+        return f"error: {e}"
+
+    meta = ticket.get("_meta", {})
+    status = meta.get("status", "")
+    ado_id = meta.get("ado_id")
+
+    # Only sync tickets that have been submitted
+    if status != "submitted":
+        return "skipped"
+
+    if not ado_id:
+        return "skipped"
+
+    try:
+        wi_id = int(ado_id)
+    except (ValueError, TypeError):
+        return f"error: invalid ado_id '{ado_id}'"
+
+    try:
+        result = get_work_item(config, wi_id, verbose=verbose)
+    except RuntimeError as e:
+        return f"error: {e}"
+
+    ado_state = result.get("fields", {}).get("System.State", "")
+
+    if ado_state not in _ADO_DONE_STATES:
+        if verbose:
+            print(f"  {path.name}: ADO state is '{ado_state}', not done", file=sys.stderr)
+        return "current"
+
+    if dry_run:
+        print(f"  [DRY RUN] {path.name}: would update status → done (ADO state: {ado_state})")
+        return "updated"
+
+    try:
+        update_md_frontmatter(filepath, {"status": "done"})
+    except (ValueError, OSError) as e:
+        return f"error: could not write {path.name}: {e}"
+
+    return "updated"
+
+
+def cmd_sync(args):
+    """Sync local .md ticket statuses with Azure DevOps."""
+    config = _get_config(args)
+    errors = validate_config(config)
+    if errors:
+        for e in errors:
+            print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    target = Path(args.path)
+    if target.is_file():
+        files = [target]
+    elif target.is_dir():
+        files = sorted(target.glob("*.md"))
+        if not files:
+            print(f"No .md files found in {target}")
+            return
+    else:
+        print(f"Error: {args.path} is not a file or directory", file=sys.stderr)
+        sys.exit(1)
+
+    dry_run = args.dry_run
+    verbose = args.verbose
+
+    if dry_run:
+        print("[DRY RUN] No files will be modified.\n")
+
+    counts = {"updated": 0, "current": 0, "skipped": 0, "errors": 0}
+
+    for f in files:
+        result = sync_ticket(str(f), config, dry_run=dry_run, verbose=verbose)
+        if result is None:
+            continue
+        elif result == "updated":
+            if not dry_run:
+                print(f"  [UPDATED] {f.name}: status → done")
+            counts["updated"] += 1
+        elif result == "current":
+            if verbose:
+                print(f"  [CURRENT] {f.name}: still open in ADO")
+            counts["current"] += 1
+        elif result == "skipped":
+            if verbose:
+                print(f"  [SKIPPED] {f.name}")
+            counts["skipped"] += 1
+        elif result.startswith("error:"):
+            print(f"  [ERROR]   {f.name}: {result[7:]}")
+            counts["errors"] += 1
+
+    print(f"\n--- Sync Summary ---")
+    print(f"Updated: {counts['updated']}")
+    print(f"Current: {counts['current']}")
+    print(f"Skipped: {counts['skipped']}")
+    if counts["errors"]:
+        print(f"Errors:  {counts['errors']}")
+
+
 def _get_config(args) -> dict:
     """Build merged config from all sources."""
     cli_overrides = {
@@ -591,6 +766,16 @@ def main():
         "--dry-run", "-n", action="store_true", help="Show patches without applying"
     )
     p_update.set_defaults(func=cmd_update)
+
+    # sync
+    p_sync = subparsers.add_parser(
+        "sync", parents=[parent], help="Sync local .md ticket statuses with Azure DevOps"
+    )
+    p_sync.add_argument("path", help="Path to .md file or directory of .md files")
+    p_sync.add_argument(
+        "--dry-run", "-n", action="store_true", help="Show what would change without modifying files"
+    )
+    p_sync.set_defaults(func=cmd_sync)
 
     args = parser.parse_args()
     args.func(args)
