@@ -5,6 +5,13 @@ All notable changes to this project.
 ## [Unreleased]
 
 ### Added
+- `CLAUDE.md` — project identity and architecture reference.
+- `README.md` — usage documentation.
+- `SECURITY.md` — baseline security doc covering PAT handling and threat model.
+
+## [0.1.0] — 2026-03-04
+
+### Added
 - `ticky sync` command — pulls ADO work item state back into local .md frontmatter, updating `status: submitted` to `status: done` when ADO state is Done/Closed/Resolved/Removed. Supports single file or directory, `--dry-run`, `--verbose`.
 - Named profile support in `.ticky.conf` — use `--profile`/`-P` to target different ADO orgs/projects.
 - `ticky get <id>` — fetch and display a work item by ID (with `--json` for raw output).

@@ -9,3 +9,4 @@ venv/
 .ticky.conf
 *.swp
 *.swo
+tmp/
