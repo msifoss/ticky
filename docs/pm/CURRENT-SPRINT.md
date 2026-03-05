@@ -3,7 +3,7 @@
 **Goal:** Harden ticky with tests, docs, and project hygiene.
 
 **Opened:** 2026-03-04
-**Status:** On Track
+**Status:** Complete
 
 ## Completed
 
@@ -13,6 +13,9 @@
 | 2 | Create README.md | S | Usage docs |
 | 3 | Create SECURITY.md | S | Baseline security doc |
 | 4 | Close Bolt 1, archive to SPRINT-LOG | S | |
+| 5 | Add test suite (pytest) — 51 tests | M | build_payload, parse_md, update_frontmatter, sync, config |
+| 6 | `ticky submit` — full draft-to-ADO lifecycle | M | Create, update frontmatter, rename file |
+| 7 | Batch create from directory | S | `ticky create <dir>` globs *.md |
 
 ## In Progress
 
@@ -20,12 +23,7 @@ _None_
 
 ## Remaining
 
-| # | Item | Size | Notes |
-|---|------|------|-------|
-| 5 | Add test suite (pytest) | M | parse_md_ticket, build_payload, update_md_frontmatter |
-| 6 | `ticky submit` — full create-from-md lifecycle | M | Create ADO item from .md, write back ado_id |
-| 7 | Batch create from directory of .md files | S | Glob *.md, create each |
-| 8 | Tag v0.1.0 release | S | |
+_Bolt goal achieved — all planned items complete._
 
 ## Blockers
 
@@ -33,5 +31,5 @@ _None_
 
 ## Metrics
 
-- Commits this Bolt: 0 (just opened)
-- Tests: 0
+- Commits this Bolt: 1 (pending)
+- Tests: 51

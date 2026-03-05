@@ -5,8 +5,9 @@ CLI utility for managing Azure DevOps work items. Creates, reads, updates, and s
 ## Architecture
 
 ```
-ticky.py      (785 lines)  — CLI entry point, all subcommands, API callers, .md parser/writer
+ticky.py      (892 lines)  — CLI entry point, all subcommands, API callers, .md parser/writer
 config.py     (125 lines)  — Config loading (INI files, env vars, CLI flags, profiles)
+tests/        (51 tests)   — pytest suite for core functions (build_payload, parse_md, sync, config)
 templates/ticket-prompt.md — Prompt template for generating ticket HTML bodies
 ```
 
@@ -23,7 +24,8 @@ templates/ticket-prompt.md — Prompt template for generating ticket HTML bodies
 
 | Command | Purpose |
 |---------|---------|
-| `create <file>` | Create work item from YAML/JSON/MD file |
+| `create <file\|dir>` | Create work item(s) from file or directory |
+| `submit <file>` | Submit a draft .md to ADO, update frontmatter, rename file |
 | `validate <file>` | Dry-validate ticket file |
 | `get <id>` | Fetch work item by ID |
 | `update <id>` | Patch work item fields |
@@ -42,5 +44,5 @@ templates/ticket-prompt.md — Prompt template for generating ticket HTML bodies
 ## Current Status
 
 - **Version:** 0.1.0
-- **Tests:** 0 (no test suite yet)
+- **Tests:** 51 (pytest)
 - **Last updated:** 2026-03-04

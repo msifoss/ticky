@@ -312,7 +312,7 @@ def load_tickets(filepath: str) -> list[dict]:
 
 
 def cmd_create(args):
-    """Create work item(s) from a ticket file."""
+    """Create work item(s) from a ticket file or directory."""
     config = _get_config(args)
     errors = validate_config(config)
     if errors:
@@ -320,11 +320,25 @@ def cmd_create(args):
             print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    try:
-        tickets = load_tickets(args.file)
-    except (FileNotFoundError, ValueError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    target = Path(args.file)
+    if target.is_dir():
+        files = sorted(target.glob("*.md"))
+        if not files:
+            print(f"No .md files found in {target}")
+            return
+        all_tickets = []
+        for f in files:
+            try:
+                all_tickets.extend(load_tickets(str(f)))
+            except (FileNotFoundError, ValueError) as e:
+                print(f"Warning: skipping {f.name}: {e}", file=sys.stderr)
+        tickets = all_tickets
+    else:
+        try:
+            tickets = load_tickets(args.file)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
 
     print(f"Processing {len(tickets)} ticket(s)...\n")
 
@@ -681,6 +695,88 @@ def cmd_sync(args):
         print(f"Errors:  {counts['errors']}")
 
 
+def cmd_submit(args):
+    """Submit a draft .md ticket to ADO and update local file."""
+    config = _get_config(args)
+    errors = validate_config(config)
+    if errors:
+        for e in errors:
+            print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    filepath = Path(args.file)
+    if not filepath.is_file():
+        print(f"Error: File not found: {args.file}", file=sys.stderr)
+        sys.exit(1)
+
+    if filepath.suffix != ".md":
+        print(f"Error: Submit requires an .md file, got {filepath.suffix}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        ticket = parse_md_ticket(str(filepath))
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    meta = ticket.get("_meta", {})
+    if meta.get("status") != "draft":
+        print(f"Error: File status is '{meta.get('status', 'unknown')}', expected 'draft'", file=sys.stderr)
+        sys.exit(1)
+
+    title = ticket["title"]
+    truncated = title[:60] + "..." if len(title) > 60 else title
+
+    if args.dry_run:
+        payload = build_payload(ticket)
+        wi_type = ticket.get("type", config["work_item_type"])
+        print(f"[DRY RUN] Submit: {truncated}")
+        print(f"          Type: {wi_type}")
+        print(f"          Payload: {json.dumps(payload, indent=2)}")
+        return
+
+    try:
+        result = create_work_item(config, ticket, verbose=args.verbose)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    wi_id = result.get("id", "?")
+    wi_url = result.get("_links", {}).get("html", {}).get("href", "")
+
+    # Update frontmatter
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    updates = {"status": "submitted", "ado_id": wi_id, "submitted": now}
+
+    if args.assign:
+        try:
+            update_work_item(config, wi_id, [
+                {"op": "add", "path": "/fields/System.AssignedTo", "value": args.assign}
+            ], verbose=args.verbose)
+            updates["assigned_to"] = args.assign
+        except RuntimeError as e:
+            print(f"Warning: Created #{wi_id} but assignment failed: {e}", file=sys.stderr)
+
+    try:
+        update_md_frontmatter(str(filepath), updates)
+    except (ValueError, OSError) as e:
+        print(f"Warning: Created #{wi_id} but could not update file: {e}", file=sys.stderr)
+
+    # Rename file: -draft.md → -submitted.md
+    new_name = filepath.name.replace("-draft.md", "-submitted.md")
+    if new_name != filepath.name:
+        new_path = filepath.parent / new_name
+        filepath.rename(new_path)
+        print(f"[OK] #{wi_id}  {truncated}")
+        print(f"     Renamed: {new_name}")
+    else:
+        print(f"[OK] #{wi_id}  {truncated}")
+
+    if wi_url:
+        print(f"     {wi_url}")
+
+
 def _get_config(args) -> dict:
     """Build merged config from all sources."""
     cli_overrides = {
@@ -717,9 +813,9 @@ def main():
 
     # create
     p_create = subparsers.add_parser(
-        "create", parents=[parent], help="Create work item(s) from a YAML/JSON/MD file"
+        "create", parents=[parent], help="Create work item(s) from a file or directory"
     )
-    p_create.add_argument("file", help="Path to ticket YAML/JSON/MD file")
+    p_create.add_argument("file", help="Path to ticket file or directory of .md files")
     p_create.add_argument(
         "--dry-run", "-n", action="store_true", help="Show payload without creating"
     )
@@ -776,6 +872,17 @@ def main():
         "--dry-run", "-n", action="store_true", help="Show what would change without modifying files"
     )
     p_sync.set_defaults(func=cmd_sync)
+
+    # submit
+    p_submit = subparsers.add_parser(
+        "submit", parents=[parent], help="Submit a draft .md ticket to Azure DevOps"
+    )
+    p_submit.add_argument("file", help="Path to draft .md ticket file")
+    p_submit.add_argument("--assign", help="Assign to a person after creation")
+    p_submit.add_argument(
+        "--dry-run", "-n", action="store_true", help="Show payload without submitting"
+    )
+    p_submit.set_defaults(func=cmd_submit)
 
     args = parser.parse_args()
     args.func(args)
