@@ -1,6 +1,6 @@
 # Backlog — ticky
 
-Last groomed: 2026-03-04
+Last groomed: 2026-03-05
 
 ## Done
 
@@ -14,15 +14,14 @@ Last groomed: 2026-03-04
 | 6 | PM docs bootstrap | S | 1 |
 | 7 | CLAUDE.md, README.md, SECURITY.md | S | 2 |
 | 8 | CHANGELOG | S | 2 |
+| 9 | Add test suite (pytest) — 51 tests | M | 2 |
+| 10 | `ticky submit` — full draft-to-ADO lifecycle | M | 2 |
+| 11 | Batch create from directory of .md files | S | 2 |
+| 12 | Tag v0.1.0 release | S | 2 |
 
 ## Executable
 
-| # | Item | Size | Notes |
-|---|------|------|-------|
-| 9 | Add test suite (pytest) for core functions | M | parse_md_ticket, build_payload, update_md_frontmatter |
-| 10 | `ticky submit` — create ADO item from .md and write back ado_id | M | Full create-from-md lifecycle |
-| 11 | Batch create from directory of .md files | S | Glob *.md, create each |
-| 12 | Tag v0.1.0 release | S | |
+_None — pull from future planning._
 
 ## Blocked
 
