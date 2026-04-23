@@ -1,6 +1,6 @@
 # Backlog — ticky
 
-Last groomed: 2026-03-05
+Last groomed: 2026-04-23
 
 ## Done
 
@@ -21,7 +21,9 @@ Last groomed: 2026-03-05
 
 ## Executable
 
-_None — pull from future planning._
+| # | Item | Size | Severity | Notes |
+|---|------|------|----------|-------|
+| 13 | **[BUG] `assigned_to` silently dropped on create (first ticket only gets assigned)** | M | Medium | When creating multiple tickets in sequence (or batch from a directory), only the first ticket lands with the `assigned_to` email applied — subsequent tickets in the same invocation (or subsequent invocations in quick succession) come back from ADO with `System.AssignedTo=null` despite `create` reporting success. Observed 2026-04-22 / 2026-04-23 on 4 ADO tickets: #8564 (assigned correctly), #8603, #8607, #8678 (all UNASSIGNED and required manual PATCH via ADO REST API to fix). Likely cause: identity-descriptor resolution succeeds once and caches, or the `assigned_to` email→identity lookup silently fails on retry and ADO drops the unknown-identity field without erroring. **Fix:** after POST, GET the created work item and verify `System.AssignedTo.uniqueName == requested_email`. If mismatch, retry with AAD descriptor format OR fail loudly with "identity not resolvable" error. Never silently succeed with a dropped field. **Regression test:** batch-create 3+ tickets with the same `assigned_to` and assert all three resolve to the correct identity. **Repro:** see `/Users/msichris/repos/callhero/docs/devops/20260423-1219-ado-permission-ticket-history-analysis.md` and ADO tickets #8603/#8607/#8678 in project `membersolutionsinc/DevOps`. |
 
 ## Blocked
 
