@@ -7,6 +7,7 @@ import json
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -146,6 +147,8 @@ def _extract_error(body: str, code: int) -> str:
         return "Authentication failed. Check that your PAT is valid and has Work Items (Read & Write) scope."
     if code == 404:
         return "Project or work item type not found. Verify your org, project, and type settings."
+    if code == 413:
+        return "Attachment too large. Azure DevOps limits single-request attachments to 130 MB."
     try:
         data = json.loads(body)
         return data.get("message", body)
@@ -153,10 +156,61 @@ def _extract_error(body: str, code: int) -> str:
         return body
 
 
+# ── Attachment API ───────────────────────────────────────────────────────────
+
+
+def upload_attachment(config: dict, filepath: str, verbose: bool = False) -> dict:
+    """Upload a file to Azure DevOps and return {id, url}.
+
+    The returned URL is what gets referenced when linking the attachment
+    to a work item via link_attachment.
+    """
+    path = Path(filepath)
+    if not path.is_file():
+        raise FileNotFoundError(f"Attachment not found: {filepath}")
+
+    filename = urllib.parse.quote(path.name)
+    url = (
+        f"https://dev.azure.com/{config['org']}/{config['project']}"
+        f"/_apis/wit/attachments?fileName={filename}&api-version=7.0"
+    )
+
+    data = path.read_bytes()
+    auth = base64.b64encode(f":{config['pat']}".encode()).decode()
+
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/octet-stream")
+    req.add_header("Authorization", f"Basic {auth}")
+
+    if verbose:
+        print(f"  POST {url}  ({len(data)} bytes)", file=sys.stderr)
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        if verbose:
+            print(f"  Response {e.code}: {body}", file=sys.stderr)
+        raise RuntimeError(f"HTTP {e.code}: {_extract_error(body, e.code)}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not connect to dev.azure.com: {e.reason}")
+
+
+def link_attachment(config: dict, work_item_id: int, attachment_url: str,
+                    comment: str = "", verbose: bool = False) -> dict:
+    """Link an already-uploaded attachment to a work item via /relations/-."""
+    value = {"rel": "AttachedFile", "url": attachment_url}
+    if comment:
+        value["attributes"] = {"comment": comment}
+    patches = [{"op": "add", "path": "/relations/-", "value": value}]
+    return update_work_item(config, work_item_id, patches, verbose=verbose)
+
+
 # ── Markdown Ticket Parser ───────────────────────────────────────────────────
 
 # Lifecycle fields stored in frontmatter but not sent to ADO
-_META_KEYS = {"status", "ado_id", "assigned_to", "created", "submitted"}
+_META_KEYS = {"status", "ado_id", "assigned_to", "created", "submitted", "attachments", "attached"}
 
 # ADO states that mean a work item is finished
 _ADO_DONE_STATES = {"Done", "Closed", "Resolved", "Removed"}
@@ -222,12 +276,42 @@ def _format_frontmatter_value(value) -> str:
     return s
 
 
+def _format_frontmatter_block(key: str, value, indent: str = "") -> str:
+    """Serialize a frontmatter key: value pair, handling scalars and lists.
+
+    - Scalars: single line `key: value`.
+    - List of scalars: block-sequence lines below the key.
+    - List of dicts (e.g. `attached`): block sequence of mappings.
+    Returns a string that can be inserted verbatim into the frontmatter.
+    """
+    if isinstance(value, list):
+        if not value:
+            return f"{indent}{key}: []\n"
+        lines = [f"{indent}{key}:\n"]
+        for item in value:
+            if isinstance(item, dict):
+                sub_lines = []
+                for i, (k, v) in enumerate(item.items()):
+                    prefix = f"{indent}  - " if i == 0 else f"{indent}    "
+                    sub_lines.append(f"{prefix}{k}: {_format_frontmatter_value(v)}\n")
+                lines.extend(sub_lines)
+            else:
+                lines.append(f"{indent}  - {_format_frontmatter_value(item)}\n")
+        return "".join(lines)
+    return f"{indent}{key}: {_format_frontmatter_value(value)}\n"
+
+
 def update_md_frontmatter(filepath: str, updates: dict) -> None:
     """Update specific frontmatter keys in an .md file, preserving everything else.
 
     Replaces only the keys present in `updates`. Preserves all other
     frontmatter lines and the body byte-for-byte. Does NOT use yaml.dump
     to avoid key reordering, quote-style changes, and reformatting.
+
+    List-valued updates (e.g. attached: [{file, id, url}, ...]) are written
+    as YAML block sequences. Any pre-existing occurrence of a list-valued
+    key (including its continuation lines) is removed before the new block
+    is appended.
     """
     path = Path(filepath)
     text = path.read_text(encoding="utf-8")
@@ -238,27 +322,56 @@ def update_md_frontmatter(filepath: str, updates: dict) -> None:
 
     frontmatter_text, body = match.group(1), match.group(2)
 
-    # Replace matching key lines; track which updates were applied
+    scalar_updates = {k: v for k, v in updates.items() if not isinstance(v, list)}
+    list_updates = {k: v for k, v in updates.items() if isinstance(v, list)}
+
+    # First pass: strip out any existing block for list-valued keys entirely
+    # (a top-level `key:` line plus any indented continuation lines).
+    if list_updates:
+        stripped_lines = []
+        skip_block = False
+        for line in frontmatter_text.splitlines(keepends=True):
+            no_indent = line[:1] not in (" ", "\t")
+            if no_indent:
+                skip_block = False
+                stripped = line.lstrip()
+                for key in list_updates:
+                    if stripped.startswith(f"{key}:"):
+                        skip_block = True
+                        break
+                if skip_block:
+                    continue
+            else:
+                if skip_block:
+                    continue
+            stripped_lines.append(line)
+        frontmatter_text = "".join(stripped_lines)
+
+    # Second pass: replace scalar key lines in place
     applied = set()
     new_lines = []
     for line in frontmatter_text.splitlines(keepends=True):
         stripped = line.lstrip()
         matched_key = None
-        for key in updates:
+        for key in scalar_updates:
             if stripped.startswith(f"{key}:"):
                 matched_key = key
                 break
         if matched_key is not None:
             indent = line[: len(line) - len(stripped)]
-            new_lines.append(f"{indent}{matched_key}: {_format_frontmatter_value(updates[matched_key])}\n")
+            new_lines.append(f"{indent}{matched_key}: {_format_frontmatter_value(scalar_updates[matched_key])}\n")
             applied.add(matched_key)
         else:
             new_lines.append(line)
 
-    # Append any keys that weren't already in the frontmatter
-    for key, value in updates.items():
+    # Append scalar keys that weren't already in the frontmatter
+    for key, value in scalar_updates.items():
         if key not in applied:
             new_lines.append(f"{key}: {_format_frontmatter_value(value)}\n")
+
+    # Append list-valued keys as YAML block sequences
+    for key, value in list_updates.items():
+        new_lines.append(_format_frontmatter_block(key, value))
 
     new_text = "---\n" + "".join(new_lines) + "---\n" + body
     path.write_text(new_text, encoding="utf-8")
@@ -695,6 +808,66 @@ def cmd_sync(args):
         print(f"Errors:  {counts['errors']}")
 
 
+def cmd_attach(args):
+    """Upload one or more files as attachments and link them to a work item.
+
+    Optionally records the attachments back into an .md ticket's frontmatter
+    under an `attached:` list (via --md).
+    """
+    from datetime import datetime, timezone
+
+    config = _get_config(args)
+    errors = validate_config(config)
+    if errors:
+        for e in errors:
+            print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.files:
+        print("Error: No files given", file=sys.stderr)
+        sys.exit(1)
+
+    ado_id = args.ado_id
+    comment = args.comment or ""
+    md_path = args.md
+    verbose = args.verbose
+
+    print(f"Attaching {len(args.files)} file(s) to work item #{ado_id}...\n")
+
+    attached_entries = []
+    failed = 0
+    for filepath in args.files:
+        name = Path(filepath).name
+        try:
+            upload = upload_attachment(config, filepath, verbose=verbose)
+            link_attachment(config, ado_id, upload["url"], comment=comment, verbose=verbose)
+        except (FileNotFoundError, RuntimeError) as e:
+            print(f"[FAIL] {name}")
+            print(f"       {e}")
+            failed += 1
+            break
+
+        entry = {
+            "file": name,
+            "id": upload["id"],
+            "url": upload["url"],
+            "uploaded": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        attached_entries.append(entry)
+        print(f"[OK]   {upload['id']}  {name}")
+        print(f"       {upload['url']}")
+
+    if md_path and attached_entries:
+        try:
+            existing = parse_md_ticket(md_path).get("_meta", {}).get("attached") or []
+            update_md_frontmatter(md_path, {"attached": existing + attached_entries})
+        except (ValueError, OSError) as e:
+            print(f"Warning: attachments uploaded but could not update {md_path}: {e}", file=sys.stderr)
+
+    if failed:
+        sys.exit(1)
+
+
 def cmd_submit(args):
     """Submit a draft .md ticket to ADO and update local file."""
     config = _get_config(args)
@@ -758,6 +931,30 @@ def cmd_submit(args):
         except RuntimeError as e:
             print(f"Warning: Created #{wi_id} but assignment failed: {e}", file=sys.stderr)
 
+    # Upload any attachments declared in frontmatter
+    attach_failed = False
+    attachments = ticket.get("_meta", {}).get("attachments") or []
+    attached_entries = []
+    if attachments and isinstance(attachments, list) and isinstance(wi_id, int):
+        for attach_rel in attachments:
+            attach_path = (filepath.parent / str(attach_rel)).resolve()
+            try:
+                upload = upload_attachment(config, str(attach_path), verbose=args.verbose)
+                link_attachment(config, wi_id, upload["url"], verbose=args.verbose)
+            except (FileNotFoundError, RuntimeError) as e:
+                print(f"Warning: Created #{wi_id} but attachment {attach_rel} failed: {e}", file=sys.stderr)
+                attach_failed = True
+                break
+            attached_entries.append({
+                "file": Path(str(attach_rel)).name,
+                "id": upload["id"],
+                "url": upload["url"],
+                "uploaded": now,
+            })
+
+    if attached_entries:
+        updates["attached"] = attached_entries
+
     try:
         update_md_frontmatter(str(filepath), updates)
     except (ValueError, OSError) as e:
@@ -775,6 +972,9 @@ def cmd_submit(args):
 
     if wi_url:
         print(f"     {wi_url}")
+
+    if attach_failed:
+        sys.exit(1)
 
 
 def _get_config(args) -> dict:
@@ -883,6 +1083,18 @@ def main():
         "--dry-run", "-n", action="store_true", help="Show payload without submitting"
     )
     p_submit.set_defaults(func=cmd_submit)
+
+    # attach
+    p_attach = subparsers.add_parser(
+        "attach", parents=[parent], help="Upload files and link them as attachments to a work item"
+    )
+    p_attach.add_argument("ado_id", type=int, help="Work item ID to attach files to")
+    p_attach.add_argument("files", nargs="+", help="One or more files to attach")
+    p_attach.add_argument("--comment", help="Optional comment stored with each attachment link")
+    p_attach.add_argument(
+        "--md", help="Optional path to a .md ticket file; appends uploads to its `attached:` list"
+    )
+    p_attach.set_defaults(func=cmd_attach)
 
     args = parser.parse_args()
     args.func(args)
