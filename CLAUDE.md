@@ -16,16 +16,18 @@ templates/ticket-prompt.md — Prompt template for generating ticket HTML bodies
 ## Key Concepts
 
 - **Ticket lifecycle:** `draft` → `submitted` → `done` (tracked in frontmatter `status` field)
-- **Frontmatter metadata:** `status`, `ado_id`, `assigned_to`, `created`, `submitted` — stored in `.md` files, not sent to ADO
+- **Frontmatter metadata:** `status`, `ado_id`, `assigned_to`, `created`, `submitted`, `attachments`, `attached` — stored in `.md` files, not sent to ADO
 - **Config resolution:** `~/.ticky.conf` → `./.ticky.conf` → env vars → CLI flags (later wins)
 - **Named profiles:** `[default]`, `[engineering]`, etc. in `.ticky.conf` — selected via `--profile`/`-P`
+- **Attachments:** `attachments:` in frontmatter is an input list of file paths (relative to the .md file) that `submit` uploads and links; `attached:` is the tool-managed output list with each entry's `{file, id, url, uploaded}`. Standalone `attach <id> <file>...` uploads to an existing work item.
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
 | `create <file\|dir>` | Create work item(s) from file or directory |
-| `submit <file>` | Submit a draft .md to ADO, update frontmatter, rename file |
+| `submit <file>` | Submit a draft .md to ADO, update frontmatter, upload any `attachments:`, rename file |
+| `attach <id> <file>...` | Upload one or more files and link them as attachments to an existing work item (optional `--md` writes back to `attached:` list) |
 | `validate <file>` | Dry-validate ticket file |
 | `get <id>` | Fetch work item by ID |
 | `update <id>` | Patch work item fields |
@@ -45,4 +47,4 @@ templates/ticket-prompt.md — Prompt template for generating ticket HTML bodies
 
 - **Version:** 0.1.0
 - **Tests:** 51 (pytest)
-- **Last updated:** 2026-03-04
+- **Last updated:** 2026-04-23

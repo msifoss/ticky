@@ -63,6 +63,30 @@ ticky sync docs/tickets/my-ticket.md  # sync a single file
 ticky sync docs/tickets/ --dry-run    # preview changes
 ```
 
+### Attach files to a work item
+
+Upload one or more files and link them to an existing work item:
+
+```bash
+ticky attach 5139 screenshot.png error.log
+ticky attach 5139 shot.png --comment "repro screenshot"
+ticky attach 5139 shot.png --md docs/tickets/my-ticket.md   # also records in frontmatter
+```
+
+Or declare attachments in a draft ticket's frontmatter — `submit` uploads them:
+
+```yaml
+---
+title: "Broken login"
+status: draft
+attachments:
+  - screenshots/broken-login.png
+  - logs/auth-error.txt
+---
+```
+
+After a successful `submit`, an `attached:` list is written back with each upload's ADO id and URL.
+
 ### Validate a ticket file
 
 ```bash

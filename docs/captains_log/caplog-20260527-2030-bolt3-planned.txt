@@ -1,0 +1,152 @@
+==========================================================
+CAPTAIN'S LOG — 2026-05-27 20:30 UTC
+Subject: Bolt 3 + Bolt 4 planned — ticket quality hardening
+Driver: CallHero 2026-05-27 ticket-quality audit
+==========================================================
+
+WHY THIS LANDS IN TICKY, NOT CALLHERO
+
+CallHero ran a 12-persona review and a 4-panelist staff ruling on
+ADO #10855 (Lake Formation grant) and #10921 (CodeDeploy permission).
+The reviews surfaced 18 unique findings. Will Larson's verdict:
+"This isn't about Ben. It's about the protocol around the lever."
+
+The "protocol" is, mechanically, ticky's ticket-prompt template plus
+whatever lint/closure behavior ticky enforces. The findings split:
+
+- 6 are direct template/prompt changes  → Bolt 3 (this sprint)
+- 5 are CLI code/enforcement changes    → Bolt 4 (deferred ~2 weeks)
+- 4 belong in CallHero process docs     → out of ticky scope
+- 3 are CallHero infra (alarms, CFN
+  retain-policies, AWS Support workflow) → out of ticky scope
+
+So Bolt 3 in ticky is the right place to fix the template; Bolt 4
+adds the enforcement layer after we have data on whether the prompt
+changes moved the needle; and CallHero gets its own follow-up items
+for the infra side.
+
+THE BIG ARCHITECTURAL CALL: TWO BOLTS, NOT ONE
+
+The /staff panel ruled that the architecturally correct shape has
+TWO layers shipped on independent timelines:
+
+LAYER 1 (Bolt 3, this sprint): prompt evolution. Zero code. No
+migration, no test regression, no version bump. Ship today, measure
+for 2 weeks.
+
+LAYER 2 (Bolt 4, deferred): code + enforcement. ~150 LOC across
+5 items including the load-bearing "two-signature closure protocol"
+that refuses to close a ticket until BOTH requester and resolver
+paste verification output. Behind an opt-in `[enforce_closure]`
+config flag for the first month so existing users aren't surprised.
+
+Tim's framing was decisive: "You don't fix a missing handshake by
+writing a longer handshake script. You fix it by making the absence
+of the handshake visible at the moment a state transition is
+attempted." That puts the load-bearing work in Bolt 4, not Bolt 3.
+Bolt 3 makes the prompt better; Bolt 4 changes what state
+transitions are allowed.
+
+KEY DESIGN PRINCIPLES (from the /staff ruling)
+
+1. Prompt is markdown, code is forever. When the artifact is read
+   by a human or by Claude, change the prompt. When it's read by a
+   binary, change the code. Defer code as long as possible.
+
+2. Verification != Falsification. Verification proves the change
+   was applied. Falsification proves the diagnosis was right. The
+   CallHero #10855 burn was a falsification failure (3 days of
+   chasing the wrong hypothesis), not a verification failure.
+   Falsification gets its own section in the new template, ranked
+   first for cross-account classes (per Rob).
+
+3. Author cost / responder cost asymmetry. We were proposing to
+   spend 30x more author effort to extract 30 seconds of responder
+   effort. Change what the responder is allowed to do instead.
+   That's where the two-signature closure protocol comes from.
+
+4. Small tools die from the inside. ticky.py is 892 lines, one
+   file, urllib only, PyYAML the only non-stdlib dep. Every new
+   subcommand is a vote against the tool's character. Hard no on
+   `verify-snippet` library or YAML verification schema — AWS API
+   drift would eat us.
+
+5. Ticket classes are a more honest interface than flags. A class
+   declaration says "this is the kind of work this is" and lets
+   every downstream consumer (prompt, lint, tag map, sync rule)
+   branch on a single source of truth.
+
+ITEMS (see BACKLOG.md for full details)
+
+Bolt 3 — Prompt Layer (6 items, all in templates/ticket-prompt.md):
+  #14 Add required `ticket_class` frontmatter field (enum, default `general`)
+  #15 Add `## Falsification` (NEW, ranked first) + `## Verify the Fix` sections
+  #16 Replace "Two Options" with "Recommended Path + Constraints + Acceptable Alternatives"
+  #17 Add `## Rollback` and `## Definition of Done` sections
+  #18 Replace "Estimated Time" with Active+Wall pair; add structured Confidence; add Interim Mitigation
+  #19 Worked example + CLAUDE/README/CHANGELOG + tag v0.2.0
+
+Bolt 4 — Code/Enforcement Layer (5 items, ~150 LOC + tests):
+  #20 `ticky validate` enforces ticket_class field present + valid
+  #21 `ticky submit` pre-flight: file paths exist on disk; title SHA/path warning
+  #22 `ticky submit` auto-maps ticket_class → ADO tags
+  #23 `ticky lint` subcommand — warns on missing class-appropriate sections (exits 0)
+  #24 `ticky verify` + `ticky sync` two-signature closure protocol (the load-bearing change)
+
+ESTIMATED VALUE
+
+Audit estimated ~12.5 hours burned on the two case-study tickets,
+fully-loaded ~$1,600-$2,000, for 5 IAM actions and 2 LF permissions.
+Three tickets in eight weeks (#10349, #10855, #10921) show the same
+protocol failure shape. If Bolt 3 saves even half the wall-time on
+the next cross-account ticket, the template change pays for itself
+within one ticket. Bolt 4's closure protocol attacks the deeper bug
+(41-hour responder silences after "should be resolved" claims) and
+should compound the savings.
+
+NOT IN SCOPE (per /staff panel, both bolts)
+
+- AWS Support ticket workflow — CallHero process, not ticky
+- ADO workflow / native two-signature closure enforcement — ADO
+  doesn't natively support this; ticky's two-sig protocol is the
+  ticky-layer alternative; the ADO-native version is out of scope
+- CFN retain-policy / dev alarm gaps — CallHero infra work
+- `ticky verify-snippet` AWS CLI generator — AWS API drift hazard
+- YAML verification schema rendered into HTML — same reason
+- Commit-SHA-against-main validation — out of scope for a ticket tool
+- Sub-templates per class — one template with prompt branching
+  is sufficient
+- Retroactive ADO ticket re-tagging — manual ops
+
+CALLHERO-SIDE FOLLOW-UPS (separate, not ticky's job)
+
+- File parallel AWS Support ticket from account 088040914383 for
+  #10855's source-side `913260320791:connect_datalake:contact_record`
+  state issue
+- Bolt 58 candidate: drop AutoPublishAlias from SubmitLink (mirror
+  the May 14 commit 588d657 that dropped it from ProcessCallLink)
+- Add callhero-data-lake-ingest-floor-24h-dev alarm to catch silent
+  Phase 1 failures faster than 2 days
+- Pin DeletionPolicy: Retain / UpdateReplacePolicy: Retain on
+  ConnectArtifactPollerFunctionRole so the next CFN deploy doesn't
+  re-orphan LF grants
+
+ROLLOUT
+
+Bolt 3 lands in ~1 day of work. Bolt 4 opens at +2 weeks (2026-06-10
+target) after a metric check on cross-account ticket round-trip
+latency. If Bolt 3 alone fixes the burn pattern, Bolt 4 can be
+scoped down or deferred indefinitely.
+
+NEXT
+
+Open Bolt 3 in CURRENT-SPRINT.md. Execute #14 → #15 → #16 → #17 →
+#18 → #19. Tag v0.2.0 on close. Set calendar reminder for
+2026-06-10 to evaluate Bolt 4 readiness.
+
+REFERENCES
+
+- /Users/msichris/repos/callhero/docs/reviews/20260527-1930-ticket-quality-twelve-persona-review.txt
+- /Users/msichris/repos/callhero/docs/key_findings/20260527-1930-ticket-instructions-correctness-staff-panel.md
+- /Users/msichris/repos/ticky/docs/pm/CURRENT-SPRINT.md
+- /Users/msichris/repos/ticky/docs/pm/BACKLOG.md (rows #14-#24)
