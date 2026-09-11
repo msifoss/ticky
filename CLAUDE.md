@@ -28,6 +28,7 @@ templates/ticket-prompt.md — Prompt template for generating ticket HTML bodies
 | `create <file\|dir>` | Create work item(s) from file or directory |
 | `submit <file>` | Submit a draft .md to ADO, update frontmatter, upload any `attachments:`, rename file |
 | `attach <id> <file>...` | Upload one or more files and link them as attachments to an existing work item (optional `--md` writes back to `attached:` list) |
+| `comment <id> --body ...` | Post a comment to a work item's Discussion thread (or `--body-file <path>` for multi-paragraph write-ups) |
 | `validate <file>` | Dry-validate ticket file |
 | `get <id>` | Fetch work item by ID |
 | `update <id>` | Patch work item fields |
