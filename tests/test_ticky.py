@@ -18,8 +18,10 @@ from ticky import (
     _ADO_DONE_STATES,
     _META_KEYS,
     _format_frontmatter_value,
+    add_comment,
     build_payload,
     cmd_attach,
+    cmd_comment,
     cmd_submit,
     link_attachment,
     parse_md_ticket,
@@ -895,4 +897,148 @@ class TestCmdSubmitAttachments:
         mock_upload.side_effect = RuntimeError("HTTP 413: too big")
         with pytest.raises(SystemExit) as exc:
             cmd_submit(self._args(md))
+        assert exc.value.code != 0
+
+
+# ── add_comment ──────────────────────────────────────────────────────────────
+
+
+class TestAddComment:
+    MOCK_CONFIG = {"pat": "fake", "org": "testorg", "project": "TestProject", "work_item_type": "Issue"}
+
+    def _make_response(self, body: dict):
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(body).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = False
+        return resp
+
+    @patch("ticky.urllib.request.urlopen")
+    def test_returns_id_and_url(self, mock_urlopen):
+        mock_urlopen.return_value = self._make_response(
+            {"id": 42, "url": "https://dev.azure.com/testorg/_apis/wit/workItems/5139/comments/42"}
+        )
+        result = add_comment(self.MOCK_CONFIG, 5139, "hello world")
+        assert result["id"] == 42
+        assert "/comments/42" in result["url"]
+
+    @patch("ticky.urllib.request.urlopen")
+    def test_url_contains_work_item_and_preview_version(self, mock_urlopen):
+        mock_urlopen.return_value = self._make_response({"id": 1, "url": "u"})
+        add_comment(self.MOCK_CONFIG, 5139, "body")
+        req = mock_urlopen.call_args[0][0]
+        assert "testorg" in req.full_url
+        assert "TestProject" in req.full_url
+        assert "/workItems/5139/comments" in req.full_url
+        # Comments API is on the preview version — required by ADO
+        assert "api-version=7.0-preview" in req.full_url
+
+    @patch("ticky.urllib.request.urlopen")
+    def test_posts_json_text_body(self, mock_urlopen):
+        mock_urlopen.return_value = self._make_response({"id": 1, "url": "u"})
+        add_comment(self.MOCK_CONFIG, 5139, "line one\n\nline two")
+        req = mock_urlopen.call_args[0][0]
+        assert req.method == "POST"
+        assert req.headers.get("Content-type") == "application/json"
+        payload = json.loads(req.data.decode("utf-8"))
+        assert payload == {"text": "line one\n\nline two"}
+
+    @patch("ticky.urllib.request.urlopen")
+    def test_auth_header_present(self, mock_urlopen):
+        mock_urlopen.return_value = self._make_response({"id": 1, "url": "u"})
+        add_comment(self.MOCK_CONFIG, 5139, "hi")
+        req = mock_urlopen.call_args[0][0]
+        assert req.headers.get("Authorization", "").startswith("Basic ")
+
+    @patch("ticky.urllib.request.urlopen")
+    def test_http_401_gives_auth_error(self, mock_urlopen):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "url", 401, "Unauthorized", {}, io.BytesIO(b"")
+        )
+        with pytest.raises(RuntimeError, match="Authentication failed"):
+            add_comment(self.MOCK_CONFIG, 5139, "hi")
+
+    @patch("ticky.urllib.request.urlopen")
+    def test_http_404_gives_not_found_error(self, mock_urlopen):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "url", 404, "Not Found", {}, io.BytesIO(b'{"message":"nope"}')
+        )
+        with pytest.raises(RuntimeError, match="404"):
+            add_comment(self.MOCK_CONFIG, 5139, "hi")
+
+
+# ── cmd_comment ──────────────────────────────────────────────────────────────
+
+
+class TestCmdComment:
+    MOCK_CONFIG = {"pat": "fake", "org": "testorg", "project": "TestProject", "work_item_type": "Issue"}
+
+    def _args(self, **overrides):
+        args = MagicMock()
+        args.ado_id = overrides.get("ado_id", 5139)
+        args.body = overrides.get("body", None)
+        args.body_file = overrides.get("body_file", None)
+        args.verbose = False
+        args.pat = None
+        args.org = None
+        args.project = None
+        args.type = None
+        args.profile = None
+        args.config = None
+        return args
+
+    @patch("ticky._get_config")
+    @patch("ticky.add_comment")
+    def test_inline_body_posted(self, mock_add, mock_get_config, capsys):
+        mock_get_config.return_value = self.MOCK_CONFIG
+        mock_add.return_value = {"id": 42, "url": "https://a/42"}
+        args = self._args(body="quick note")
+        cmd_comment(args)
+        assert mock_add.call_args[0][2] == "quick note"
+        out = capsys.readouterr().out
+        assert "42" in out
+        assert "5139" in out
+
+    @patch("ticky._get_config")
+    @patch("ticky.add_comment")
+    def test_body_file_read_and_posted(self, mock_add, mock_get_config, tmp_path):
+        mock_get_config.return_value = self.MOCK_CONFIG
+        f = tmp_path / "writeup.md"
+        f.write_text("# Investigation\n\nMulti-paragraph body.\n")
+        mock_add.return_value = {"id": 42, "url": "u"}
+        args = self._args(body_file=str(f))
+        cmd_comment(args)
+        posted = mock_add.call_args[0][2]
+        assert posted.startswith("# Investigation")
+        assert "Multi-paragraph body." in posted
+
+    @patch("ticky._get_config")
+    @patch("ticky.add_comment")
+    def test_body_file_wins_over_inline_body(self, mock_add, mock_get_config, tmp_path):
+        mock_get_config.return_value = self.MOCK_CONFIG
+        f = tmp_path / "w.md"
+        f.write_text("FROM FILE")
+        mock_add.return_value = {"id": 42, "url": "u"}
+        args = self._args(body="INLINE", body_file=str(f))
+        cmd_comment(args)
+        assert mock_add.call_args[0][2] == "FROM FILE"
+
+    @patch("ticky._get_config")
+    @patch("ticky.add_comment")
+    def test_missing_body_file_exits_nonzero(self, mock_add, mock_get_config, tmp_path):
+        mock_get_config.return_value = self.MOCK_CONFIG
+        args = self._args(body_file=str(tmp_path / "nope.md"))
+        with pytest.raises(SystemExit) as exc:
+            cmd_comment(args)
+        assert exc.value.code != 0
+        mock_add.assert_not_called()
+
+    @patch("ticky._get_config")
+    @patch("ticky.add_comment")
+    def test_api_failure_exits_nonzero(self, mock_add, mock_get_config):
+        mock_get_config.return_value = self.MOCK_CONFIG
+        mock_add.side_effect = RuntimeError("HTTP 500: server error")
+        args = self._args(body="hi")
+        with pytest.raises(SystemExit) as exc:
+            cmd_comment(args)
         assert exc.value.code != 0

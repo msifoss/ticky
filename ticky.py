@@ -207,6 +207,40 @@ def link_attachment(config: dict, work_item_id: int, attachment_url: str,
     return update_work_item(config, work_item_id, patches, verbose=verbose)
 
 
+def add_comment(config: dict, work_item_id: int, body: str, verbose: bool = False) -> dict:
+    """Post a comment to a work item's Discussion thread.
+
+    ADO's comments endpoint lives on the preview API (7.0-preview.3). The body
+    is sent as JSON: {"text": <string>}. Returns the created comment as parsed
+    JSON (includes id, url, createdDate).
+    """
+    url = (
+        f"https://dev.azure.com/{config['org']}/{config['project']}"
+        f"/_apis/wit/workItems/{work_item_id}/comments?api-version=7.0-preview.3"
+    )
+
+    data = json.dumps({"text": body}).encode("utf-8")
+    auth = base64.b64encode(f":{config['pat']}".encode()).decode()
+
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Basic {auth}")
+
+    if verbose:
+        print(f"  POST {url}  ({len(data)} bytes)", file=sys.stderr)
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body_resp = e.read().decode()
+        if verbose:
+            print(f"  Response {e.code}: {body_resp}", file=sys.stderr)
+        raise RuntimeError(f"HTTP {e.code}: {_extract_error(body_resp, e.code)}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not connect to dev.azure.com: {e.reason}")
+
+
 # ── Markdown Ticket Parser ───────────────────────────────────────────────────
 
 # Lifecycle fields stored in frontmatter but not sent to ADO
@@ -868,6 +902,45 @@ def cmd_attach(args):
         sys.exit(1)
 
 
+def cmd_comment(args):
+    """Post a comment to a work item's Discussion thread.
+
+    Body comes from --body (inline string) or --body-file (path). If both
+    are given, --body-file wins.
+    """
+    config = _get_config(args)
+    errors = validate_config(config)
+    if errors:
+        for e in errors:
+            print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.body_file:
+        try:
+            body = Path(args.body_file).read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError) as e:
+            print(f"Error: Could not read --body-file: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.body:
+        body = args.body
+    else:
+        # argparse enforces this; belt-and-suspenders for programmatic callers.
+        print("Error: Either --body or --body-file is required", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        result = add_comment(config, args.ado_id, body, verbose=args.verbose)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    cid = result.get("id", "?")
+    curl = result.get("url", "")
+    print(f"[OK] comment #{cid} posted to work item #{args.ado_id}")
+    if curl:
+        print(f"     {curl}")
+
+
 def cmd_submit(args):
     """Submit a draft .md ticket to ADO and update local file."""
     config = _get_config(args)
@@ -1095,6 +1168,20 @@ def main():
         "--md", help="Optional path to a .md ticket file; appends uploads to its `attached:` list"
     )
     p_attach.set_defaults(func=cmd_attach)
+
+    # comment
+    p_comment = subparsers.add_parser(
+        "comment", parents=[parent],
+        help="Post a comment to a work item's Discussion thread",
+    )
+    p_comment.add_argument("ado_id", type=int, help="Work item ID to comment on")
+    body_group = p_comment.add_mutually_exclusive_group(required=True)
+    body_group.add_argument("--body", help="Comment body as an inline string")
+    body_group.add_argument(
+        "--body-file", dest="body_file",
+        help="Path to a file whose contents will be posted as the comment body",
+    )
+    p_comment.set_defaults(func=cmd_comment)
 
     args = parser.parse_args()
     args.func(args)

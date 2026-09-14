@@ -87,6 +87,17 @@ attachments:
 
 After a successful `submit`, an `attached:` list is written back with each upload's ADO id and URL.
 
+### Post a comment to a work item
+
+Add a comment to the work item's Discussion tab (distinct from an attachment's per-file caption):
+
+```bash
+ticky comment 5139 --body "Quick note from the on-call rotation"
+ticky comment 5139 --body-file investigation-writeup.md   # multi-paragraph
+```
+
+Exactly one of `--body` or `--body-file` is required. If both are given, `--body-file` wins. Markdown is accepted; ADO renders it on the Discussion tab.
+
 ### Validate a ticket file
 
 ```bash
